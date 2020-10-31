@@ -311,11 +311,13 @@ ptr<resp_msg> raft_server::handle_append_entries(req_msg& req) {
     return resp;
 }
 
-ptr<resp_msg> raft_server::handle_vote_req(req_msg& req) {
+ptr<resp_msg> raft_server::handle_vote_req(req_msg& req) {//ÊÕµ½À´×ÔÆäËû½ÚµãµÄÍ¶Æ±ÇëÇó
     ptr<resp_msg> resp(cs_new<resp_msg>(state_->get_term(), msg_type::vote_response, id_, req.get_src()));
-    bool log_okay = req.get_last_log_term() > log_store_->last_entry()->get_term() ||
-        (req.get_last_log_term() == log_store_->last_entry()->get_term() &&
-            log_store_->next_slot() - 1 <= req.get_last_log_idx());
+    bool log_okay = req.get_last_log_term() > log_store_->last_entry()->get_term() ||//Í¶Æ±ÇëÇóÖĞµÄ×îºóÒ»´ÎÈÕÖ¾ËùÊôÈÎÆÚ Òª´óÓÚ ×Ô¼ºµÄ×îºóÒ»´ÎÈÕÖ¾ËùÊôÈÎÆÚ
+        (req.get_last_log_term() == log_store_->last_entry()->get_term() &&//»òÕßËùÊôÈÎÆÚÒ»ÑùÇé¿öÏÂ£¬
+            log_store_->next_slot() - 1 <= req.get_last_log_idx()); //Í¶Æ±ÇëÇóÖĞµÄ×îºóÒ»´ÎÈÕÖ¾Ë÷Òı²»ÄÜĞ¡ÓÚ×Ô¼ºµÄ×îºóÒ»´ÎÈÕÖ¾Ë÷Òı
+    //Í¶Æ±ÇëÇóÖĞµÄÈÎÆÚ±ØĞëµÈÓÚ×Ô¼ºµ±Ç°µÄÈÎÆÚ£¬²¢ÇÒÈÕÖ¾Ò²Âú×ãÌõ¼ş
+    //
     bool grant = req.get_term() == state_->get_term() && log_okay && (state_->get_voted_for() == req.get_src() || state_->get_voted_for() == -1);
     if (grant) {
         resp->accept(log_store_->next_slot());
@@ -331,7 +333,7 @@ ptr<resp_msg> raft_server::handle_prevote_req(req_msg& req) {//ÊÕµ½À´×ÔÆäËû½Úµãµ
     bool log_okay = req.get_last_log_term() > log_store_->last_entry()->get_term() || //Ô¤Í¶Æ±ÇëÇóÖĞµÄ×îºóÒ»´ÎÈÕÖ¾ËùÊôÈÎÆÚ Òª´óÓÚ ×Ô¼ºµÄ×îºóÒ»´ÎÈÕÖ¾ËùÊôÈÎÆÚ
         (req.get_last_log_term() == log_store_->last_entry()->get_term() && //»òÕßËùÊôÈÎÆÚÒ»ÑùÇé¿öÏÂ£¬Ô¤Í¶Æ±ÇëÇóÖĞµÄ×îºóÒ»´ÎÈÕÖ¾Ë÷Òı²»ÄÜĞ¡ÓÚ×Ô¼ºµÄ×îºóÒ»´ÎÈÕÖ¾Ë÷Òı
             log_store_->next_slot() - 1 <= req.get_last_log_idx());
-    bool grant = req.get_term() >= state_->get_term() && log_okay; //Ô¤Í¶Æ±ÇëÇóÖĞµÄÈÎÆÚ²»ÄÜĞ¡ÓÚ×Ô¼ºµ±Ç°µÄÈÎÆÚ£¬²¢ÇÒÈÕÖ¾Ò²Âú×ãÌõ¼ş£¬²ÅËã½ÓÊÜÕâ´ÎÔ¤Í¶Æ±ÇëÇó
+    bool grant = req.get_term() >= state_->get_term() && log_okay; //Ô¤Í¶Æ±ÇëÇóÖĞµÄÈÎÆÚ²»ÄÜĞ¡ÓÚ×Ô¼ºµ±Ç°µÄÈÎÆÚ£¬²¢ÇÒÈÕÖ¾Ò²Âú×ãÌõ¼ş£¬²Å½ÓÊÜÕâ´ÎÔ¤Í¶Æ±ÇëÇó
     if (ctx_->params_->defensive_prevote_) {
         // In defensive mode, server will deny the prevote when it's operating well.
         grant = grant && prevote_state_;
@@ -428,15 +430,15 @@ void raft_server::handle_election_timeout() {
 }
 
 void raft_server::become_candidate() {
-    prevote_state_.reset();
-    state_->inc_term();
-    state_->set_voted_for(-1);
+    prevote_state_.reset(); //¹Ø±ÕÔ¤Í¶Æ±£¬×¼±¸·¢ÆğÕıÊ½Í¶Æ±
+    state_->inc_term(); //µ±Ç°ÈÎÆÚ+1
+    state_->set_voted_for(-1);//ÖØÖÃ¡¶Ä³¸ötermÄÚ Í¶Æ±¸øÁËÄÄ¸ö½Úµã¡·
     role_ = srv_role::candidate;
-    votes_granted_ = 0;
-    voted_servers_.clear();
-    election_completed_ = false;
+    votes_granted_ = 0; //½ÓÊÜ×Ô¼ºÊÇleader µÄ½ÚµãÊıÁ¿
+    voted_servers_.clear();//ÖØÖÃÉÏ¸ötermÄÚÏò×Ô¼ºÍ¶Æ±µÄ½Úµã
+    election_completed_ = false; //ÊÇ·ñÍê³ÉÑ¡¾Ù£¬false±íÊ¾Ñ¡¾ÙÖĞ¡£¡£¡£
     ctx_->state_mgr_->save_state(*state_);
-    request_vote();
+    request_vote(); //¿ªÊ¼ÏòÆäËû½ÚµãÇëÇó Í¬Òâ×Ô¼º³ÉÎªleader
 
     // restart the election timer if this is not yet a leader
     if (role_ != srv_role::leader) {
@@ -480,18 +482,18 @@ void raft_server::request_vote() {
     l_->info(sstrfmt("requestVote started with term %llu").fmt(state_->get_term()));
     state_->set_voted_for(id_);//Îª×Ô¼ºÍ¶Ò»Æ±
     ctx_->state_mgr_->save_state(*state_);
-    votes_granted_ += 1;//×Ô¼ºÖ§³Ö×Ô¼º£¬½ÓÊÜ×Ô¼ºÊÇleaderµÄserverÊıÁ¿¼Ó1.
-    voted_servers_.insert(id_); //×Ô¼ºÍ¶×Ô¼º
+    votes_granted_ += 1;//×Ô¼ºÖ§³Ö×Ô¼º£¬½ÓÊÜ×Ô¼ºÊÇleaderµÄ½ÚµãÊıÁ¿¼Ó1.
+    voted_servers_.insert(id_); //¼ÇÂ¼Ä³¸ötermÄÚÏò×Ô¼ºÍ¶Æ±µÄ½Úµã¡£×Ô¼ºÊ×ÏÈÍ¶×Ô¼ºÒ»Æ±
 
     bool change_to_leader(false);
     {
         read_lock(peers_lock_);
         
         // is this the only server?
-        if (votes_granted_ > (int32)(peers_.size() + 1) / 2) {
+        if (votes_granted_ > (int32)(peers_.size() + 1) / 2) { //Èç¹ûÕû¸ö¼¯Èº¾Í×Ô¼ºÒ»¸ö½Úµã£¬Ö±½ÓÖ¸¶¨×Ô¼ºÎªleader¼´¿É¡£
             election_completed_ = true;
             change_to_leader = true;
-        } else {
+        } else { //Ïò¼¯ÈºÖĞÆäËû½Úµã·¢ËÍÍ¶Æ±ÇëÇó
             for (peer_itor it = peers_.begin(); it != peers_.end(); ++it) {
                 ptr<req_msg> req(cs_new<req_msg>(state_->get_term(), msg_type::vote_request, id_, it->second->get_id(), term_for_log(log_store_->next_slot() - 1), log_store_->next_slot() - 1, quick_commit_idx_));
                 l_->debug(sstrfmt("send %s to server %d with term %llu").fmt(__msg_type_str[req->get_type()], it->second->get_id(), state_->get_term()));
@@ -717,7 +719,7 @@ void raft_server::handle_prevote_resp(resp_msg& resp) {
    
     //·¢ÆğÔ¤Í¶Æ±Ê±³õÊ¼»¯prevote_state_¡£
     //Ô¤Í¶Æ±ÔÚ¼¯ÈºÖĞÍ¨¹ıºó£¬°Ñ×Ô¼ºÌáÉıÎªºòÑ¡ÈË¡£µ÷ÓÃbecome_candidate(),¸Ãº¯ÊıÖĞ»áÖØÖÃ prevote_state_.reset()¡£
-    //ËùÒÔµ±prevote_state_Îª¿ÕÊ±£¬ÒâÎ¶×ÅÔ¤Í¶Æ±Íê³É¡£
+    //ËùÒÔµ±prevote_state_Îª¿ÕÊ±£¬ÒâÎ¶×ÅÒ»ÂÖÔ¤Í¶Æ±ÒÑ¾­Íê³É¡£
     if (!prevote_state_) { 
         l_->info(sstrfmt("Prevote has completed, term received: %llu, current term %llu").fmt(resp.get_term(), state_->get_term()));
         return;
