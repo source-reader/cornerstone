@@ -326,22 +326,22 @@ ptr<resp_msg> raft_server::handle_vote_req(req_msg& req) {
     return resp;
 }
 
-ptr<resp_msg> raft_server::handle_prevote_req(req_msg& req) {
+ptr<resp_msg> raft_server::handle_prevote_req(req_msg& req) {//收到来自其他节点的预投票请求
     ptr<resp_msg> resp(cs_new<resp_msg>(state_->get_term(), msg_type::prevote_response, id_, req.get_src()));
-    bool log_okay = req.get_last_log_term() > log_store_->last_entry()->get_term() ||
-        (req.get_last_log_term() == log_store_->last_entry()->get_term() &&
+    bool log_okay = req.get_last_log_term() > log_store_->last_entry()->get_term() || //预投票请求中的最后一次日志所属任期 要大于 自己的最后一次日志所属任期
+        (req.get_last_log_term() == log_store_->last_entry()->get_term() && //或者所属任期一样情况下，预投票请求中的最后一次日志索引不能小于自己的最后一次日志索引
             log_store_->next_slot() - 1 <= req.get_last_log_idx());
-    bool grant = req.get_term() >= state_->get_term() && log_okay;
+    bool grant = req.get_term() >= state_->get_term() && log_okay; //预投票请求中的任期不能小于自己当前的任期，并且日志也满足条件，才算接受这次预投票请求
     if (ctx_->params_->defensive_prevote_) {
         // In defensive mode, server will deny the prevote when it's operating well.
         grant = grant && prevote_state_;
     }
 
-    if (grant) {
-        resp->accept(log_store_->next_slot());
+    if (grant) { //预投票请求被接受，resp 设置接受这次预投票请求，并带上自己的下一次日志索引
+        resp->accept(log_store_->next_slot()); 
     }
 
-    return resp;
+    return resp;//预投票请求没有被接受 resp->next_idx_ = 0; resp->accepted_ = false;
 }
 
 ptr<resp_msg> raft_server::handle_cli_req(req_msg& req) {
@@ -449,12 +449,12 @@ void raft_server::request_prevote() {
     bool change_to_candidate(false);
     {
         read_lock(peers_lock_);
-        if (peers_.size() == 0) {
+        if (peers_.size() == 0) { //理论上不可能，如果整个集群只要有他自己，就成立。
             change_to_candidate = true;
         }
     }
 
-    if (change_to_candidate) {
+    if (change_to_candidate) {//整个集群只要有他自己时，不用预投票，直接变为候选人。
         l_->info("prevote done, change to candidate and start voting");
         become_candidate();
         return;
@@ -464,11 +464,11 @@ void raft_server::request_prevote() {
         prevote_state_ = std::make_unique<prevote_state>();
     }
 
-    prevote_state_->inc_accepted_votes();
-    prevote_state_->add_voted_server(id_);
+    prevote_state_->inc_accepted_votes(); //预投票自己投自己
+    prevote_state_->add_voted_server(id_);//预投票自己投自己
     {
         read_lock(peers_lock_);
-        for (peer_itor it = peers_.begin(); it != peers_.end(); ++it) {
+        for (peer_itor it = peers_.begin(); it != peers_.end(); ++it) { //向集群其他节点发起预投票，为了判断自己有没有资格成为候选人。成为候选人后即可发起投票
             ptr<req_msg> req(cs_new<req_msg>(state_->get_term(), msg_type::prevote_request, id_, it->second->get_id(), term_for_log(log_store_->next_slot() - 1), log_store_->next_slot() - 1, quick_commit_idx_));
             l_->debug(sstrfmt("send %s to server %d with term %llu").fmt(__msg_type_str[req->get_type()], it->second->get_id(), state_->get_term()));
             it->second->send_req(req, ex_resp_handler_);
@@ -478,10 +478,10 @@ void raft_server::request_prevote() {
 
 void raft_server::request_vote() {
     l_->info(sstrfmt("requestVote started with term %llu").fmt(state_->get_term()));
-    state_->set_voted_for(id_);
+    state_->set_voted_for(id_);//为自己投一票
     ctx_->state_mgr_->save_state(*state_);
-    votes_granted_ += 1;
-    voted_servers_.insert(id_);
+    votes_granted_ += 1;//自己支持自己，接受自己是leader的server数量加1.
+    voted_servers_.insert(id_); //自己投自己
 
     bool change_to_leader(false);
     {
@@ -710,32 +710,40 @@ void raft_server::handle_voting_resp(resp_msg& resp) {
 }
 
 void raft_server::handle_prevote_resp(resp_msg& resp) {
-    if (resp.get_term() != state_->get_term()) {
+    if (resp.get_term() != state_->get_term()) {//向其他节点发起预投票请求后，收到的resp中包含的任期必须和自己当前任期相同，否则不予理会
         l_->info(sstrfmt("Received an outdated prevote response at term %llu v.s. current term %llu").fmt(resp.get_term(), state_->get_term()));
         return;
     }
-
-    if (!prevote_state_) {
+   
+    //发起预投票时初始化prevote_state_。
+    //预投票在集群中通过后，把自己提升为候选人。调用become_candidate(),该函数中会重置 prevote_state_.reset()。
+    //所以当prevote_state_为空时，意味着预投票完成。
+    if (!prevote_state_) { 
         l_->info(sstrfmt("Prevote has completed, term received: %llu, current term %llu").fmt(resp.get_term(), state_->get_term()));
         return;
     }
 
     {
         read_lock(peers_lock_);
-        bool vote_added = prevote_state_->add_voted_server(resp.get_src());
+        bool vote_added = prevote_state_->add_voted_server(resp.get_src()); //记录对预投票请求 有resp的server_id
         if (!vote_added) {
-            l_->info("Prevote has from %d has been processed.");
+            l_->info("Prevote from %d has been processed.");
             return;
         }
 
-        if (resp.get_accepted()) {
+        if (resp.get_accepted()) {//如果预投票请求 被接受，则接受数量 accepted_votes_ 加1
             prevote_state_->inc_accepted_votes();
         }
 
-        if (prevote_state_->get_accepted_votes() > (int32)((peers_.size() + 1) / 2)) {
+        //peers_ 是除了自己外的 集群中其他节点，peers_.size() + 1 即集群中的所有节点
+        if (prevote_state_->get_accepted_votes() > (int32)((peers_.size() + 1) / 2)) { //集群中超过一半数量的节点同意自己成为候选人
             l_->info(sstrfmt("Prevote passed for term %llu").fmt(state_->get_term()));
             become_candidate();
         } else if (prevote_state_->num_of_votes() >= (peers_.size() + 1)) {
+            //等到集群中的所有节点都返回了resp了,上面的if分支都还没满足条件,说明这次预投票没有被整个集群接受。
+            //下面这个restart_election_timer随处可见的调用会是常态。
+            //但是leader通过定时的request_append_entries 来维持自己领导人地位, 所以一般情况下follower的election_timer无法等到超时触发就会因为
+            //收到leader的append_entries请求而被重置。
             l_->info(sstrfmt("Prevote failed for term %llu").fmt(state_->get_term()));
             prevote_state_->reset(); // still in prevote state, just reset the prevote state
             restart_election_timer(); // restart election timer for a new round of prevote
