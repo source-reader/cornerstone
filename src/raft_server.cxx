@@ -172,7 +172,7 @@ raft_server::~raft_server() {
 ptr<resp_msg> raft_server::process_req(req_msg& req) {
     ptr<resp_msg> resp;
     l_->debug(
-        lstrfmt("Receive a %s message from %d with LastLogIndex=%llu, LastLogTerm=%llu, EntriesLength=%d, CommitIndex=%llu and Term=%llu")
+        lstrfmt("Receive a %s message from server %d with LastLogIndex=%llu, LastLogTerm=%llu, EntriesLength=%d, CommitIndex=%llu and Term=%llu")
         .fmt(
             __msg_type_str[req.get_type()],
             req.get_src(),
@@ -212,7 +212,7 @@ ptr<resp_msg> raft_server::process_req(req_msg& req) {
 
     if (resp) {
         l_->debug(
-            lstrfmt("Response back a %s message to %d with Accepted=%d, Term=%llu, NextIndex=%llu")
+            lstrfmt("Response back a %s message to server %d with Accepted=%d, Term=%llu, NextIndex=%llu")
             .fmt(
                 __msg_type_str[resp->get_type()],
                 resp->get_dst(),
@@ -316,9 +316,12 @@ ptr<resp_msg> raft_server::handle_vote_req(req_msg& req) {//ÊÕµ½À´×ÔÆäËû½ÚµãµÄÍ¶
     bool log_okay = req.get_last_log_term() > log_store_->last_entry()->get_term() ||//Í¶Æ±ÇëÇóÖÐµÄ×îºóÒ»´ÎÈÕÖ¾ËùÊôÈÎÆÚ Òª´óÓÚ ×Ô¼ºµÄ×îºóÒ»´ÎÈÕÖ¾ËùÊôÈÎÆÚ
         (req.get_last_log_term() == log_store_->last_entry()->get_term() &&//»òÕßËùÊôÈÎÆÚÒ»ÑùÇé¿öÏÂ£¬
             log_store_->next_slot() - 1 <= req.get_last_log_idx()); //Í¶Æ±ÇëÇóÖÐµÄ×îºóÒ»´ÎÈÕÖ¾Ë÷Òý²»ÄÜÐ¡ÓÚ×Ô¼ºµÄ×îºóÒ»´ÎÈÕÖ¾Ë÷Òý
-    //Í¶Æ±ÇëÇóÖÐµÄÈÎÆÚ±ØÐëµÈÓÚ×Ô¼ºµ±Ç°µÄÈÎÆÚ£¬²¢ÇÒÈÕÖ¾Ò²Âú×ãÌõ¼þ
-    //
-    bool grant = req.get_term() == state_->get_term() && log_okay && (state_->get_voted_for() == req.get_src() || state_->get_voted_for() == -1);
+    //ÔÚµ÷ÓÃhandle_vote_reqÖ®Ç°£¬»áµ÷ÓÃupdate_termº¯Êý£¬¸Ãº¯Êý¼ì²éÈÎÆÚºÏ·¨ÐÔ£¬Èç¹ûÍ¶Æ±ÇëÇóÖÐµÄÈÎÆÚ > ÏÖÔÚµÄÈÎÆÚ£¬Ôò¸üÐÂÏÖÔÚµÄÈÎÆÚ,Í¬Ê±³õÊ¼»¯Ïà¹Ø±äÁ¿¡£·ñÔòupdate_term²»×öÈÎºÎÊÂÇé¡£
+    //Í¶Æ±ÇëÇóÖÐµÄÈÎÆÚÓÐÈýÖÖÇé¿ö£º
+    //1¡¢Ð¡ÓÚÏÖÔÚµÄÈÎÆÚ£¬update_term²»×öÈÎºÎÊÂÇé¡£ÒòÎª±È×Ô¼ºµ±Ç°ÈÎÆÚÐ¡£¬ËùÒÔgrantÎªfalse¡£
+    //2¡¢µÈÓÚÏÖÔÚµÄÈÎÆÚ£¬update_termÍ¬Ñù²»×öÈÎºÎÊÂÇé¡£»ùÓÚÄ³¸öÈÎÆÚÄÚ£¬Ö»ÄÜ¸øÒ»¸ö½ÚµãÍ¶Æ±¡£ËùÒÔstate_->get_voted_for() == -1±ØÐëÒª³ÉÁ¢¡£·ñÔògrantÎªfalse¡£ state_->get_voted_for() == req.get_src() Îª¶àÓà£¿£¿£¿£¿
+    //3¡¢´óÓÚÏÖÔÚµÄÈÎÆÚ£¬update_termÉèÖÃstate_->set_term(req.term)¸üÐÂ×Ô¼ºÈÎÆÚÎª´óµÄÈÎÆÚ,ÉèÖÃstate_->set_voted_for(-1)ÖØÖÃ¡¶Ä³¸ötermÄÚ Í¶Æ±¸øÁËÄÄ¸ö½Úµã¡·, ²¢¸üÐÂÏà¹Ø±äÁ¿¡£
+    bool grant = req.get_term() == state_->get_term() && log_okay && (/*state_->get_voted_for() == req.get_src() ||*/ state_->get_voted_for() == -1);
     if (grant) {
         resp->accept(log_store_->next_slot());
         state_->set_voted_for(req.get_src());
@@ -339,7 +342,7 @@ ptr<resp_msg> raft_server::handle_prevote_req(req_msg& req) {//ÊÕµ½À´×ÔÆäËû½Úµãµ
         grant = grant && prevote_state_;
     }
 
-    if (grant) { //Ô¤Í¶Æ±ÇëÇó±»½ÓÊÜ£¬resp ÉèÖÃ½ÓÊÜÕâ´ÎÔ¤Í¶Æ±ÇëÇó£¬²¢´øÉÏ×Ô¼ºµÄÏÂÒ»´ÎÈÕÖ¾Ë÷Òý
+    if (grant) { //Ô¤Í¶Æ±ÇëÇó±»½ÓÊÜ£¬resp ´øÉÏ×Ô¼ºµÄÏÂÒ»´ÎÈÕÖ¾Ë÷Òý
         resp->accept(log_store_->next_slot()); 
     }
 
@@ -678,12 +681,12 @@ void raft_server::handle_install_snapshot_resp(resp_msg& resp) {
 
 void raft_server::handle_voting_resp(resp_msg& resp) {
     if (resp.get_term() != state_->get_term()) {
-        l_->info(sstrfmt("Received an outdated vote response at term %llu v.s. current term %llu").fmt(resp.get_term(), state_->get_term()));
+        l_->info(sstrfmt("Received an outdated prevote response from server %d at term %llu v.s. current term %llu").fmt(resp.get_src(), resp.get_term(), state_->get_term()));
         return;
     }
     
     if (election_completed_) {
-        l_->info("Election completed, will ignore the voting result from this server");
+        l_->info(sstrfmt("Election completed, will ignore the voting result from this server %d").fmt(resp.get_src()));
         return;
     }
 
@@ -713,7 +716,7 @@ void raft_server::handle_voting_resp(resp_msg& resp) {
 
 void raft_server::handle_prevote_resp(resp_msg& resp) {
     if (resp.get_term() != state_->get_term()) {//ÏòÆäËû½Úµã·¢ÆðÔ¤Í¶Æ±ÇëÇóºó£¬ÊÕµ½µÄrespÖÐ°üº¬µÄÈÎÆÚ±ØÐëºÍ×Ô¼ºµ±Ç°ÈÎÆÚÏàÍ¬£¬·ñÔò²»ÓèÀí»á
-        l_->info(sstrfmt("Received an outdated prevote response at term %llu v.s. current term %llu").fmt(resp.get_term(), state_->get_term()));
+        l_->info(sstrfmt("Received an outdated prevote response from server %d at term %llu v.s. current term %llu").fmt(resp.get_src(), resp.get_term(), state_->get_term()));
         return;
     }
    
@@ -770,7 +773,7 @@ void raft_server::handle_hb_timeout(peer& p) {
         }
     }
     else {
-        l_->info(sstrfmt("Receive a heartbeat event for %d while no longer as a leader").fmt(p.get_id()));
+        l_->info(sstrfmt("Receive a heartbeat event for server %d while no longer as a leader").fmt(p.get_id()));
     }
 }
 
@@ -1248,7 +1251,7 @@ void raft_server::handle_ext_resp(ptr<resp_msg>& resp, const ptr<rpc_exception>&
     }
 
     l_->debug(
-        lstrfmt("Receive an extended %s message from peer %d with Result=%d, Term=%llu, NextIndex=%llu")
+        lstrfmt("Receive an extended %s message from server %d with Result=%d, Term=%llu, NextIndex=%llu")
         .fmt(
             __msg_type_str[resp->get_type()],
             resp->get_src(),
