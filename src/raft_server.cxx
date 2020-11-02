@@ -438,7 +438,7 @@ void raft_server::become_candidate() {
     state_->set_voted_for(-1);//重置《某个term内 投票给了哪个节点》
     role_ = srv_role::candidate;
     votes_granted_ = 0; //接受自己是leader 的节点数量
-    voted_servers_.clear();//重置上个term内向自己投票的节点
+    voted_servers_.clear();//重置上个term内对自己投票请求 有resp的节点
     election_completed_ = false; //是否完成选举，false表示选举中。。。
     ctx_->state_mgr_->save_state(*state_);
     request_vote(); //开始向其他节点请求 同意自己成为leader
@@ -486,7 +486,7 @@ void raft_server::request_vote() {
     state_->set_voted_for(id_);//为自己投一票
     ctx_->state_mgr_->save_state(*state_);
     votes_granted_ += 1;//自己支持自己，接受自己是leader的节点数量加1.
-    voted_servers_.insert(id_); //记录某个term内向自己投票的节点。自己首先投自己一票
+    voted_servers_.insert(id_); //记录某个term内对自己投票请求 有resp的节点。自己首先投自己一票
 
     bool change_to_leader(false);
     {
@@ -680,16 +680,16 @@ void raft_server::handle_install_snapshot_resp(resp_msg& resp) {
 }
 
 void raft_server::handle_voting_resp(resp_msg& resp) {
-    if (resp.get_term() != state_->get_term()) {
-        l_->info(sstrfmt("Received an outdated prevote response from server %d at term %llu v.s. current term %llu").fmt(resp.get_src(), resp.get_term(), state_->get_term()));
+    if (resp.get_term() != state_->get_term()) {//任期不匹配，直接忽略
+        l_->info(sstrfmt("Received an outdated vote response from server %d at term %llu v.s. current term %llu").fmt(resp.get_src(), resp.get_term(), state_->get_term()));
         return;
     }
     
-    if (election_completed_) {
+    if (election_completed_) {//集群节点超过一半同意自己就当选为leader。当选leader后，后续的vote resp可以直接忽略了
         l_->info(sstrfmt("Election completed, will ignore the voting result from this server %d").fmt(resp.get_src()));
         return;
     }
-
+    //理论上不会发生Duplicate vote，一个任期内只会向一个节点发送一次投票请求，新任期开始会清空voted_servers_。
     if (voted_servers_.find(resp.get_src()) != voted_servers_.end()) {
         l_->info(sstrfmt("Duplicate vote from %d for term %lld").fmt(resp.get_src(), state_->get_term()));
         return;
@@ -697,16 +697,16 @@ void raft_server::handle_voting_resp(resp_msg& resp) {
 
     {
         read_lock(peers_lock_);
-        voted_servers_.insert(resp.get_src());
+        voted_servers_.insert(resp.get_src());  //记录某个term内对自己投票请求 有resp的节点
         if (resp.get_accepted()) {
-            votes_granted_ += 1;
+            votes_granted_ += 1; //接受自己是leader的节点数量加1.
         }
 
-        if (voted_servers_.size() >= (peers_.size() + 1)) {
+        if (voted_servers_.size() >= (peers_.size() + 1)) { //集群中全局节点都 resp了。说明此轮选举结束
             election_completed_ = true;
         }
 
-        if (votes_granted_ > (int32)((peers_.size() + 1) / 2)) {
+        if (votes_granted_ > (int32)((peers_.size() + 1) / 2)) { //集群中超过一半的节点 同意自己是leader。 提升自己为leader
             l_->info(sstrfmt("Server is elected as leader for term %llu").fmt(state_->get_term()));
             election_completed_ = true;
             become_leader();
