@@ -226,7 +226,7 @@ ptr<resp_msg> raft_server::process_req(req_msg& req) {
 
 ptr<resp_msg> raft_server::handle_append_entries(req_msg& req) {
     if (req.get_term() == state_->get_term()) {
-        if (role_ == srv_role::candidate) {
+        if (role_ == srv_role::candidate) {//收到同步日志请求，说明相同任期下 已经有leader存在，自己转变为follower
             become_follower();
         }
         else if (role_ == srv_role::leader) {
@@ -804,9 +804,9 @@ void raft_server::stop_election_timer() {
 }
 
 void raft_server::become_leader() {
-    stop_election_timer();
+    stop_election_timer(); //停止超时选举定时器
     role_ = srv_role::leader;
-    leader_ = id_;
+    leader_ = id_; //leader 是自己
     srv_to_join_.reset();
     ptr<snapshot> nil_snp;
     {
