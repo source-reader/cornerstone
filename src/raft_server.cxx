@@ -226,7 +226,7 @@ ptr<resp_msg> raft_server::process_req(req_msg& req) {
 
 ptr<resp_msg> raft_server::handle_append_entries(req_msg& req) {
     if (req.get_term() == state_->get_term()) {
-        if (role_ == srv_role::candidate) {//收到同步日志请求，说明相同任期下 已经有leader存在，自己转变为follower
+        if (role_ == srv_role::candidate) {
             become_follower();
         }
         else if (role_ == srv_role::leader) {
@@ -760,7 +760,7 @@ void raft_server::handle_hb_timeout(peer& p) {
     recur_lock(lock_);
     l_->debug(sstrfmt("Heartbeat timeout for %d").fmt(p.get_id()));
     if (role_ == srv_role::leader) {
-        request_append_entries(p);
+        request_append_entries(p); //向其他节点发送同步日志的请求
         {
             std::lock_guard<std::mutex> guard(p.get_lock());
             if (p.is_hb_enabled()) {
@@ -804,9 +804,9 @@ void raft_server::stop_election_timer() {
 }
 
 void raft_server::become_leader() {
-    stop_election_timer(); //停止超时选举定时器
+    stop_election_timer(); //成为leader后，停止选举定时器
     role_ = srv_role::leader;
-    leader_ = id_; //leader 是自己
+    leader_ = id_;
     srv_to_join_.reset();
     ptr<snapshot> nil_snp;
     {
@@ -815,7 +815,7 @@ void raft_server::become_leader() {
             it->second->set_next_log_idx(log_store_->next_slot());
             it->second->set_snapshot_in_sync(nil_snp);
             it->second->set_free();
-            enable_hb_for_peer(*(it->second));
+            enable_hb_for_peer(*(it->second)); //定时向集群中其他节点 发送同步日志请求，维护自己领导人的地位
         }
     }
 
@@ -833,7 +833,7 @@ void raft_server::become_leader() {
         ctx_->event_listener_->on_event(raft_event::become_leader);
     }
 
-    request_append_entries();
+    request_append_entries(); //当选后立即向其他节点发送一次同步日志的请求
 }
 
 void raft_server::enable_hb_for_peer(peer& p) {
