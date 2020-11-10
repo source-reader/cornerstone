@@ -512,11 +512,11 @@ void raft_server::request_vote() {
 
 void raft_server::request_append_entries() {
     read_lock(peers_lock_);
-    if (peers_.size() == 0) {
+    if (peers_.size() == 0) { //集群中如果只有自己，则直接提交日志。因为也没法和其他节点进行 "大多数确认"。
         commit(log_store_->next_slot() - 1);
         return;
     }
-
+    //向集群中其他节点 发送附加日志请求
     for (peer_itor it = peers_.begin(); it != peers_.end(); ++it) {
         request_append_entries(*it->second);
     }
@@ -815,7 +815,7 @@ void raft_server::become_leader() {
             it->second->set_next_log_idx(log_store_->next_slot());
             it->second->set_snapshot_in_sync(nil_snp);
             it->second->set_free();
-            enable_hb_for_peer(*(it->second)); //定时向集群中其他节点 发送同步日志请求，维护自己领导人的地位
+            enable_hb_for_peer(*(it->second)); //通过heart_beat定时向集群中其他节点 发送同步日志请求，维护自己领导人的地位
         }
     }
 
@@ -830,7 +830,7 @@ void raft_server::become_leader() {
 
     if (ctx_->event_listener_)
     {
-        ctx_->event_listener_->on_event(raft_event::become_leader);
+        ctx_->event_listener_->on_event(raft_event::become_leader); //可以作为raft系统外的事件驱动
     }
 
     request_append_entries(); //当选后立即向其他节点发送一次同步日志的请求
