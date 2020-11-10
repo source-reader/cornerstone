@@ -107,8 +107,8 @@ namespace cornerstone {
         int32 leader_;
         int32 id_;
         int32 votes_granted_;
-        ulong quick_commit_idx_;
-        ulong sm_commit_index_;
+        ulong quick_commit_idx_;//已提交的的 最大日志的index（初始值为 0，单调递增） Leader 把日志条目复制到集群中大多数节点，Leader 通过更新 CommitIndex 将日志条目置为提交状态
+        ulong sm_commit_index_; //写入到状态机中的 最大日志的index（初始值为 0，单调递增）Leader 通过 AppendEntries 请求将自己的 CommitIndex 通知给其他节点，其他节点进行提交操作，当大多数节点提交完成后，Leader 更新自己的 LastApplied 并将日志条目中的命令应用到状态机中
         bool election_completed_;
         bool config_changing_;
         bool catching_up_;

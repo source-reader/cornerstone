@@ -319,9 +319,10 @@ ptr<resp_msg> raft_server::handle_vote_req(req_msg& req) {//收到来自其他节点的投
     //在调用handle_vote_req之前，会调用update_term函数，该函数检查任期合法性，如果投票请求中的任期 > 现在的任期，则更新现在的任期,同时初始化相关变量。否则update_term不做任何事情。
     //投票请求中的任期有三种情况：
     //1、小于现在的任期，update_term不做任何事情。因为比自己当前任期小，所以grant为false。
-    //2、等于现在的任期，update_term同样不做任何事情。基于某个任期内，只能给一个节点投票。所以state_->get_voted_for() == -1必须要成立。否则grant为false。 state_->get_voted_for() == req.get_src() 为多余？？？？
-    //3、大于现在的任期，update_term设置state_->set_term(req.term)更新自己任期为大的任期,设置state_->set_voted_for(-1)重置《某个term内 投票给了哪个节点》, 并更新相关变量。
-    bool grant = req.get_term() == state_->get_term() && log_okay && (/*state_->get_voted_for() == req.get_src() ||*/ state_->get_voted_for() == -1);
+    //2、等于现在的任期，update_term同样不做任何事情。基于某个任期内，只能给一个节点投票。所以state_->get_voted_for() == -1要成立，表示没有投过票；
+    //或者state_->get_voted_for() == req.get_src()要成立，表示？？？？？？？？？？？？
+    //3、大于现在的任期，update_term设置state_->set_term(req.term)更新自己任期为 更大的任期,设置state_->set_voted_for(-1)重置《某个term内 投票给了哪个节点》, 并更新相关变量。
+    bool grant = req.get_term() == state_->get_term() && log_okay && (state_->get_voted_for() == req.get_src() || state_->get_voted_for() == -1);
     if (grant) {
         resp->accept(log_store_->next_slot());
         state_->set_voted_for(req.get_src());
@@ -438,7 +439,7 @@ void raft_server::become_candidate() {
     state_->set_voted_for(-1);//重置《某个term内 投票给了哪个节点》
     role_ = srv_role::candidate;
     votes_granted_ = 0; //接受自己是leader 的节点数量
-    voted_servers_.clear();//重置上个term内对自己投票请求 有resp的节点
+    voted_servers_.clear();//重置对自己投票请求 有resp的节点
     election_completed_ = false; //是否完成选举，false表示选举中。。。
     ctx_->state_mgr_->save_state(*state_);
     request_vote(); //开始向其他节点请求 同意自己成为leader
@@ -689,7 +690,7 @@ void raft_server::handle_voting_resp(resp_msg& resp) {
         l_->info(sstrfmt("Election completed, will ignore the voting result from this server %d").fmt(resp.get_src()));
         return;
     }
-    //理论上不会发生Duplicate vote，一个任期内只会向一个节点发送一次投票请求，新任期开始会清空voted_servers_。
+    //理论上不会发生Duplicate vote，一个任期内只会向一个节点发送一次投票请求，新一轮投票请求 开始前 会清空voted_servers_。
     if (voted_servers_.find(resp.get_src()) != voted_servers_.end()) {
         l_->info(sstrfmt("Duplicate vote from %d for term %lld").fmt(resp.get_src(), state_->get_term()));
         return;
@@ -812,14 +813,14 @@ void raft_server::become_leader() {
     {
         read_lock(peers_lock_);
         for (peer_itor it = peers_.begin(); it != peers_.end(); ++it) {
-            it->second->set_next_log_idx(log_store_->next_slot());
+            it->second->set_next_log_idx(log_store_->next_slot()); //为其他节点设置下一次需要发送的日志索引，初始值都是领导者最后的日志索引 + 1
             it->second->set_snapshot_in_sync(nil_snp);
             it->second->set_free();
-            enable_hb_for_peer(*(it->second)); //通过heart_beat定时向集群中其他节点 发送同步日志请求，维护自己领导人的地位
+            enable_hb_for_peer(*(it->second)); //定时向集群中其他节点 发送同步日志请求，强制他们同步新的日志，同时也维护了自己领导人的地位
         }
     }
 
-    if (config_->get_log_idx() == 0) {
+    if (config_->get_log_idx() == 0) { //如果配置不存在。就写入配置到日志中
         config_->set_log_idx(log_store_->next_slot());
         bufptr conf_buf = config_->serialize();
         ptr<log_entry> entry(cs_new<log_entry>(state_->get_term(), std::move(conf_buf), log_val_type::conf));
