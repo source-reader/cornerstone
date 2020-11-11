@@ -16,7 +16,7 @@
 */
 
 #include "../include/cornerstone.hxx"
-
+#include <assert.h>
 using namespace cornerstone;
 
 const int raft_server::default_snapshot_sync_block_size = 4 * 1024;
@@ -997,15 +997,15 @@ ptr<req_msg> raft_server::create_append_entries_req(peer& p) {
         starting_idx = log_store_->start_index();
         cur_nxt_idx = log_store_->next_slot();
         commit_idx = quick_commit_idx_;
-        term = state_->get_term();
+        term = state_->get_term();//领导者任期
     }
 
     {
         std::lock_guard<std::mutex> guard(p.get_lock());
-        if (p.get_next_log_idx() == 0L) {
+       /* if (p.get_next_log_idx() == 0L) {
             p.set_next_log_idx(cur_nxt_idx);
-        }
-
+        }*/
+        assert(p.get_next_log_idx() != 0L);
         last_log_idx = p.get_next_log_idx() - 1;
     }
 
