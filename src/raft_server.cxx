@@ -524,8 +524,8 @@ void raft_server::request_append_entries() {
 }
 
 bool raft_server::request_append_entries(peer& p) {
-    if (p.make_busy()) {
-        ptr<req_msg> msg = create_append_entries_req(p);
+    if (p.make_busy()) { //期望busy_flag_为false，然后置为true. 如果此时busy_flag_ 为true, 就会失败。
+        ptr<req_msg> msg = create_append_entries_req(p); //基于自身现在的日志状态，创建附加日志请求，发送给集群其他节点
         p.send_req(msg, resp_handler_);
         return true;
     }
@@ -986,26 +986,27 @@ void raft_server::on_snapshot_completed(ptr<snapshot>& s, bool result, const ptr
 }
 
 ptr<req_msg> raft_server::create_append_entries_req(peer& p) {
+    //默认值，starting_idx 的默认值是1，从1开始
     ulong cur_nxt_idx(0L);
     ulong commit_idx(0L);
     ulong last_log_idx(0L);
     ulong term(0L);
-    ulong starting_idx(1L);
+    ulong starting_idx(1L); //日志第一次开始的索引，从1开始
 
     {
         recur_lock(lock_);
-        starting_idx = log_store_->start_index();
-        cur_nxt_idx = log_store_->next_slot();
-        commit_idx = quick_commit_idx_;
+        starting_idx = log_store_->start_index(); //自己当前的日志索引。只有日志压缩会引起该值变化。
+        cur_nxt_idx = log_store_->next_slot();//当前日志索引+当前日志条目。 假若日志索引为1,日志条目2条，则next_index是3.
+        commit_idx = quick_commit_idx_; //已提交的 最高的日志 索引
         term = state_->get_term();//领导者任期
     }
 
     {
         std::lock_guard<std::mutex> guard(p.get_lock());
-       /* if (p.get_next_log_idx() == 0L) {
+        if (p.get_next_log_idx() == 0L) {
             p.set_next_log_idx(cur_nxt_idx);
-        }*/
-        assert(p.get_next_log_idx() != 0L);
+        }
+        
         last_log_idx = p.get_next_log_idx() - 1;
     }
 
